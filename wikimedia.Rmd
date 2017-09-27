@@ -1,0 +1,249 @@
+---
+title: "Wikimedia User Session Length and Clickthrough Rate Analysis"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+    toc: true
+---
+
+<b>Responses by Connor Lenio.</b> Email: cojamalo@gmail.com
+Current Version: Sep 27, 2017
+
+* * *
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(fig.align='center', message = FALSE, warning=FALSE)
+```
+
+* * *
+
+## Data Analysis Tasks and Action Plan
+
+*You must create a reproducible report answering the following questions:*
+
+1) *What is our daily overall clickthrough rate? How does it vary between the groups?*
+
+The click-through rate is the proportion of search sessions where the user clicked on one of the results displayed. The "visitPage" level in the `action` variable signifies when a user clicks a link in the results during their sessions. This question can be answered by grouping the log data by session and counting the number of sessions that have at least one "visitPage" event. The data will also have to be grouped by day to find the daily rate. Finally, the data will be grouped by the `group` factor to answer the second question.
+
+2) *Which results do people tend to try first? How does it change day-to-day?*
+
+This question will be answered by grouping the log data by session, then the `result_position` of the first entry of "visitPage" for a session will be recorded. The second question will require grouping the distribution of `result_postion` recorded for the first question by day to look for any changes.
+
+3) *What is our daily overall zero results rate? How does it vary between the groups?*
+
+The zero results rate is the proportion of searches that yielded zero results. For the data, the zero results rate can be calculated by finding the searches (action equals "searchResultPage") where the `n_results` value is zero. The logs will be grouped by day since the daily overall rate is needed. Finally, the data will be grouped by the `group` factor to answer the second question.
+
+4) *Let session length be approximately the time between the first event and the last event in a session. Choose a variable from the dataset and describe its relationship to session length. Visualize the relationship.*
+
+To begin, the session length must be calculated for each session by subtracting the last event timestamp from the first event timestamp for each session. The `session_length` variable will be added to the data by mutating the original data set. Then, a suitable variable will be compared to `session_length` and its relationship explored with relevant tables and plots 
+
+5) *Summarize your findings in an executive summary.*
+
+## Load Packages
+
+```{r}
+library(data.table) # fread
+library(DT) # interactive javascript datatable
+library(pander) # pretty tables
+library(tidyverse) 
+library(gridExtra) # multiple panel ggplot
+library(lubridate) # datetime manipulation
+```
+
+
+## Load Data 
+
+```{r}
+logs = fread("events_log.csv", header= TRUE, na.strings = "NA") %>% tbl_df
+```
+
+
+## Data Manipulation
+
+As often happens when working with data, the variables under consideration are not formatted in the most useful types to complete the analysis. Thus, the following transformations are made to convert the problem variables to more useful formats or types.
+
+### Convert `timestamp` to datetime
+
+Having `timestamp` in datetime format will facilitate the calculation of time-dependent quantities.
+```{r}
+logs = logs %>% 
+        mutate(timestamp = ymd_hms(timestamp))
+```
+
+### Convert grouping columns of type character to factors
+
+Factor types are useful for analysis with character type variables with repeated labels. The variables `session_id`, `group`, and `action` all have instances of different rows with the same values. 
+```{r}
+logs = logs %>% 
+        mutate_at(c("session_id", "group", "action"), factor)
+```
+
+### Create the `session_length` variable
+
+The length of each session can be calculated by subtracting the least datetime value from greatest datetime value for each session. Then, this value is added to the original data by left joining the data on the `session_id` variable. Therefore, every row will have both a `session_id` and `session_length` that denotes how long each session lasted.
+```{r}
+session_length = logs %>% group_by(session_id) %>% summarize(session_length = max(timestamp) - min(timestamp))
+logs = logs %>% left_join(session_length, by=c("session_id"))
+```
+
+## Exploratory Data Analysis
+
+With the data in the best formats for analysis, the exploration of the requested information can proceed.
+
+### What is our daily overall clickthrough rate?
+
+The following code produces a table with the overall click-through rate for each day.
+
+```{r}
+logs %>% group_by(day=lubridate::wday(timestamp, label=TRUE), session_id) %>% summarize(clickthrough = any(action=="visitPage")) %>% summarize(daily_clickthrough_rate = mean(clickthrough)) %>% datatable(style="bootstrap")
+```
+
+To find the overall daily click-through rate, the following code is appropriate.
+
+```{r results="asis"}
+logs %>% group_by(session_id) %>% summarize(clickthrough = any(action=="visitPage")) %>% summarize(overall_clickthrough_rate = mean(clickthrough)) %>% pandoc.table
+```
+
+The overall click-through rate is about 38.9%.
+
+### How does the clickthrough rate vary between the groups?
+
+In order to view the difference is click-through rate between groups, the following code produces a table that gives the overall click-through rate for both groups, a and b.
+
+```{r results="asis"}
+logs %>% group_by(group, session_id) %>% summarize(clickthrough = any(action=="visitPage")) %>% summarize(clickthrough_rate = mean(clickthrough)) %>% pandoc.table
+```
+
+Group a has a much higher click-through rate of about 67.0% while group "b's" rate is about 17.5%.
+
+### Which results do people tend to try first?
+
+An Empirical Cumulative Distribution Function (ECDF) can give one representation of which results people tend to try first. The ECDF from the following code displays the cumulative proportion of users that selected which result position first from position one to twenty. For instance, a total of about 81% of users first selected either result position one or two. Since about 67% of users chose result one, then about 14% of users selected position two first to give a cumulative probability of 81%. Users may have selected larger results positions than position twenty, but at a much lower rate as the cumulative proportion is close to 1 by result number twenty. 
+
+```{r fig.height=6}
+first_visits = logs %>% filter(action=="visitPage", !is.na(result_position)) %>% group_by(session_id) %>% filter(timestamp == min(timestamp)) %>% ungroup 
+
+plot_dat = data.frame(x=seq(0,20, by = 1), y=ecdf(first_visits$result_position)(seq(0,20, by = 1)))
+
+ggplot(plot_dat, aes(x=x, y=y)) +
+    geom_step() +
+    geom_point() +
+    scale_y_continuous(breaks = seq(0.00,1.00, by = 0.05)) +
+    scale_x_continuous(breaks = seq(0,20, by = 1)) +
+    labs(title = "ECDF of Result Position",x = "Result Position",y = "F(Result Position)") +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+As the ECDF shows, users tend to pick the top results positions first at a much higher proportion than lower positions with over 2/3rd of users selecting the top or first result position as their first try.
+
+### How do the results people tend to try first change day-to-day?
+
+The following code displays the same information as before, but this time shows the ECDF for each day.
+
+```{r fig.height=6}
+first_visits_by_day = logs %>% filter(action=="visitPage", !is.na(result_position)) %>% group_by(session_id) %>% filter(timestamp == min(timestamp)) %>% mutate(day=lubridate::wday(timestamp, label=TRUE))
+
+plot_dat = data.frame(x=seq(0,20, by = 1))
+for(day in unique(first_visits_by_day$day)) {
+    data = first_visits_by_day %>% filter(day == day)
+    plot_dat[,day] = ecdf(data$result_position)(seq(0,20, by = 1))
+}
+plot_dat = plot_dat %>% gather(day, y, Sun:Fri)
+plot_dat$day = factor(plot_dat$day, levels=c("Sun","Mon","Tues","Wed","Thurs","Fri","Sat"))
+ggplot(plot_dat, aes(x=x, y=y, color=day)) +
+    geom_step() +
+    geom_point() +
+    scale_y_continuous(breaks = seq(0.00,1.00, by = 0.05)) +
+    scale_x_continuous(breaks = seq(0,20, by = 1)) +
+    labs(title = "ECDF of Result Position",x = "Result Position",y = "F(Result Position)") +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+All the ECDFs overlap nearly perfectly, so there is no obvious difference between which result users pick depending on the day they visited the site.
+
+
+### What is our daily overall zero results rate?
+
+The following code produces a table with the overall zero results rate for each day.
+
+```{r}
+logs %>% filter(action=="searchResultPage") %>% mutate(zero_results = n_results == 0) %>% group_by(day=lubridate::wday(timestamp, label=TRUE)) %>% summarize(zero_results_rate = mean(zero_results)) %>% datatable(style="bootstrap")
+#data = logs %>% filter(action=="searchResultPage") %>% mutate(zero_results = n_results == 0)
+#statsr::inference(zero_results, data=data, type="ci", method = "theoretical", statistic = "proportion", success = TRUE, verbose = FALSE, show_res=TRUE)
+```
+
+To find the overall daily click-through rate, the following code is appropriate.
+```{r results="asis"}
+logs %>% filter(action=="searchResultPage") %>% mutate(zero_results = n_results == 0) %>% summarize(zero_results_rate = mean(zero_results)) %>% pandoc.table
+```
+
+
+
+The daily overall zero results rate is about 18.4%.
+
+### How does our daily overall zero results rate vary between the groups?
+
+In order to view the difference is zero results rate between groups, the following code produces a table that gives the overall zero results rate for both groups, "a" and "b".
+
+```{r results="asis"}
+logs %>% filter(action=="searchResultPage") %>% mutate(zero_results = n_results == 0) %>% group_by(group) %>% summarize(zero_results_rate = mean(zero_results)) %>% pandoc.table
+```
+
+The zero results rates for both groups are nearly equal with an 18.4% and 18.6% zero results rate for groups "a" and "b" respectively.
+
+
+### Choose a variable from the dataset and describe its relationship to session length. Visualize the relationship.
+
+Commonly, a relationship between the click-through rate and the amount of time a user spends visiting exists for a website with search capability. I wanted to see if this assumption is true for the Wikimedia data set as well. The following code calculates if a click-through event occurred for each session and how long the session lasted. Three plots show a comparison of the distribution of session length for those sessions where a click-through event occurred and those sessions where no click-through event occurred. The three plot types, boxplots, density plots, and ECDF plots, show the distribution information in different ways. 
+
+
+```{r fig.height=5, fig.width=10}
+click_in_session = logs %>% group_by(session_id) %>% summarize(clickthrough = any(action=="visitPage"))
+click_length = session_length %>% left_join(click_in_session, by = "session_id")
+
+plot_dat = data.frame(x=seq(0,60, by = 1))
+click_length$clickthrough = plyr::revalue(as.character(click_length$clickthrough), c("TRUE"="Yes", "FALSE"="No"))
+for(value in unique(click_length$clickthrough)) {
+    data = click_length %>% filter(clickthrough == value)
+    plot_dat[,as.character(value)] = ecdf(data$session_length)(seq(0,60, by = 1))
+}
+plot_dat = plot_dat %>% gather(value, y, `Yes`:`No`)
+
+ecdf_comp = ggplot(plot_dat, aes(x=x, y=y, color=value)) +
+    geom_line() +
+    geom_point() +
+    scale_y_continuous(breaks = seq(0.00,1.00, by = 0.05)) +
+    scale_x_continuous(breaks = seq(0,60, by = 2)) +
+    labs(title = "ECDF of Session Length by Clickthrough Event",x = "Session Length (secs)",y = "F(Session Length)", color = "Clickthrough Event") +
+    theme(legend.position=c(0.8, 0.5), plot.title = element_text(hjust = 0.5))
+
+sum_table = click_length %>% group_by(clickthrough) %>% summarize(center=median(session_length), spread=IQR(session_length))
+
+boxplot <- ggplot(click_length, aes(x = clickthrough, y = session_length, fill = factor(clickthrough), color = factor(clickthrough))) +
+  geom_boxplot(alpha =0.6) +
+    scale_y_continuous(breaks = seq(0, 60, by = 2)) +
+    theme(legend.position="none", plot.title = element_text(hjust = 0.5)) +
+    labs(title = "Boxplot of Session Length by Clickthrough Event", y = "Session Length (secs)", x = "Clickthrough Event")
+
+density <- ggplot(click_length, aes(session_length)) + geom_density(aes(fill = factor(clickthrough),color = factor(clickthrough)), 
+                                                      alpha = 0.6) +
+        geom_vline(xintercept = sum_table[[1,2]], color = "#F8766D") +
+    geom_vline(xintercept = sum_table[[1,2]] + sqrt(sum_table[[1,3]]), color = "#F8766D", lty = 2, alpha =0.6) +
+    geom_vline(xintercept = sum_table[[1,2]] - sqrt(sum_table[[1,3]]), color = "#F8766D", lty = 2, alpha =0.6) +
+    geom_vline(xintercept = sum_table[[2,2]] , color = "#00BFC4") +
+    geom_vline(xintercept = sum_table[[2,2]]  + sqrt(sum_table[[2,3]]), color = "#00BFC4", lty = 2, alpha =0.6) +
+    geom_vline(xintercept = sum_table[[2,2]]  - sqrt(sum_table[[2,3]]), color = "#00BFC4", lty = 2, alpha =0.6) +
+    theme(legend.position=c(0.8, 0.7), plot.title = element_text(hjust = 0.5)) +
+    labs(title = "Density of Session Length by Clickthrough Event", y = "P(Session Length)", x = "Session Length (secs)", fill = "Clickthrough Event",color = "Clickthrough Event")
+
+grid.arrange(boxplot, grid.arrange(ecdf_comp, density,ncol = 1),ncol = 2)
+```
+
+All three plots support the assumption that there is a positive association between a click-through event occurring and session length. Users that click-through had a higher median session length (7 seconds versus 0 seconds) and a higher probability of a longer session length. One interesting feature of the data is that the distribution of `session_length` for a click-through success is bimodal indicating that there are possibly two classes of sessions where a click-through occurred with a distinguishing feature and makes one class last longer than the other.
+
+
+## Summarize your findings in an executive summary
+
+For the sample of Wikimedia sessions, in 38.9% of all sessions, the visitor clicked on one of the search results displayed. In over two-thirds of these sessions, the user first selected the top result in the list with 95% of users first selecting one of the top six results. Which result position was selected first did not change depending on the day of the week the session occurred. Moreover, users in group "a" clicked on a result in 67% of their sessions while users in group "b" only clicked on a result in 17.5% of their sessions. In addition, nearly 18.4% of all searches in the sampled sessions returned zero results with no major difference in zero results rate between users in group "a" and "b". Finally, there is a clear, positive association between a click-through event occurring and the length a session lasted indicating that increasing the click-through rate may have a positive effect on session length, and, thus, on one measure of user engagement.   
