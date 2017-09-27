@@ -6,7 +6,7 @@ Submission by Connor Lenio. Email: cojamalo@gmail.com
 Completion Date: Sep 27, 2017
 
 
-Please view https://cojamalo.github.io/DATA-DUKE-Stats-R-Capstone/EDA_peer.html to properly view the RMarkdown document.
+Please go to https://cojamalo.github.io/DATA-PROJ-Wikimedia-User-Data/wikimedia.html to properly view the RMarkdown document.
 
 
 
